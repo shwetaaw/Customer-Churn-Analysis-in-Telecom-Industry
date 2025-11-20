@@ -1,0 +1,162 @@
+import os
+import pandas as pd
+import numpy as np
+
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import OneHotEncoder
+from sklearn.compose import ColumnTransformer
+from sklearn.pipeline import Pipeline
+from sklearn.linear_model import LogisticRegression
+from sklearn.metrics import accuracy_score, classification_report, confusion_matrix
+
+
+def load_data(csv_path: str) -> pd.DataFrame:
+    """Load the telecom churn dataset."""
+    if not os.path.exists(csv_path):
+        raise FileNotFoundError(f"Dataset not found at: {csv_path}")
+    df = pd.read_csv(csv_path)
+    print("✅ Data loaded successfully.")
+    print("Shape:", df.shape)
+    print("Columns:", df.columns.tolist())
+    return df
+
+
+def clean_data(df: pd.DataFrame) -> pd.DataFrame:
+    """Basic data cleaning and preprocessing."""
+    df = df.copy()
+
+    # Strip spaces from column names
+    df.columns = df.columns.str.strip()
+
+    # Handle TotalCharges if it exists and is object type (common in telecom churn dataset)
+    if "TotalCharges" in df.columns and df["TotalCharges"].dtype == "object":
+        df["TotalCharges"] = pd.to_numeric(df["TotalCharges"], errors="coerce")
+
+    # Drop rows with all NA in important columns (optional)
+    df = df.dropna(subset=["Churn"])
+
+    # Drop customerID column if exists (not a useful feature)
+    if "customerID" in df.columns:
+        df = df.drop(columns=["customerID"])
+
+    # Fill remaining numeric NAs with median
+    numeric_cols = df.select_dtypes(include=[np.number]).columns
+    for col in numeric_cols:
+        df[col] = df[col].fillna(df[col].median())
+
+    # Fill categorical NAs with mode
+    cat_cols = df.select_dtypes(include=["object", "bool"]).columns
+    for col in cat_cols:
+        df[col] = df[col].fillna(df[col].mode()[0])
+
+    # Encode target column Churn (Yes/No -> 1/0)
+    if df["Churn"].dtype == "object":
+        df["Churn"] = df["Churn"].str.strip().str.lower().map({"yes": 1, "no": 0})
+
+    print("\n✅ Data cleaned successfully.")
+    print("Missing values after cleaning:\n", df.isna().sum())
+    return df
+
+
+def basic_eda(df: pd.DataFrame) -> None:
+    """Print some basic EDA results."""
+    print("\n===== BASIC EDA =====")
+
+    # Churn rate
+    churn_rate = df["Churn"].mean() * 100
+    print(f"\nChurn rate: {churn_rate:.2f}%")
+
+    # Tenure stats if available
+    if "tenure" in df.columns:
+        print("\nTenure statistics:")
+        print(df["tenure"].describe())
+
+    # MonthlyCharges stats if available
+    if "MonthlyCharges" in df.columns:
+        print("\nMonthlyCharges statistics:")
+        print(df["MonthlyCharges"].describe())
+
+    # Contract distribution vs churn (if exists)
+    if "Contract" in df.columns:
+        print("\nChurn by Contract type:")
+        print(df.groupby("Contract")["Churn"].mean() * 100)
+
+
+def prepare_features_and_target(df: pd.DataFrame):
+    """Split the dataset into X (features) and y (target)."""
+    X = df.drop(columns=["Churn"])
+    y = df["Churn"]
+
+    return X, y
+
+
+def build_model(X: pd.DataFrame, y: pd.Series):
+    """Build and train a logistic regression model with preprocessing."""
+    # Identify categorical and numeric columns
+    categorical_cols = X.select_dtypes(include=["object", "bool"]).columns.tolist()
+    numeric_cols = X.select_dtypes(include=[np.number]).columns.tolist()
+
+    # Preprocess categorical data with OneHotEncoder
+    categorical_transformer = OneHotEncoder(handle_unknown="ignore")
+
+    preprocessor = ColumnTransformer(
+        transformers=[
+            ("cat", categorical_transformer, categorical_cols),
+            ("num", "passthrough", numeric_cols),
+        ]
+    )
+
+    # Define the model
+    model = LogisticRegression(max_iter=1000)
+
+    # Build pipeline
+    clf = Pipeline(steps=[("preprocessor", preprocessor),
+                         ("model", model)])
+
+    # Split data
+    X_train, X_test, y_train, y_test = train_test_split(
+        X, y, test_size=0.2, random_state=42, stratify=y
+    )
+
+    # Train
+    clf.fit(X_train, y_train)
+    print("\n✅ Model training completed.")
+
+    # Predict
+    y_pred = clf.predict(X_test)
+
+    # Evaluate
+    acc = accuracy_score(y_test, y_pred)
+    print(f"\nAccuracy: {acc:.4f}")
+
+    print("\nClassification Report:")
+    print(classification_report(y_test, y_pred))
+
+    print("Confusion Matrix:")
+    print(confusion_matrix(y_test, y_pred))
+
+    return clf
+
+
+def main():
+    # Path to dataset
+    csv_path = os.path.join("data", "telecom_churn.csv")
+
+    # Load data
+    df = load_data(csv_path)
+
+    # Clean data
+    df = clean_data(df)
+
+    # EDA
+    basic_eda(df)
+
+    # Prepare features and target
+    X, y = prepare_features_and_target(df)
+
+    # Build and evaluate model
+    _ = build_model(X, y)
+
+
+if __name__ == "__main__":
+    main()
